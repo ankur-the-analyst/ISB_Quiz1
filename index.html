@@ -143,6 +143,7 @@
         const SUPABASE_SUBMISSIONS_TABLE = 'quiz_submissions'; 
         const SUPABASE_QUESTIONS_TABLE = 'quiz_questions';
         const STATIC_QUIZ_UUID = '5f4b3d2c-1a0e-9f8d-7c6b-5a4e3d2c1b0a';
+        const SUPABASE_STATUS_TABLE = 'quiz_status'; // <<< ADDED: Supabase table for global status
 
         // Initialize Supabase client
         const { createClient } = supabase;
@@ -171,7 +172,7 @@
         // >>> END ADDED
 
         // Allows Admin to globally toggle the quiz state
-        let isQuizActive = localStorage.getItem('isQuizActive') === 'false' ? false : true; 
+        let isQuizActive = null; // <<< MODIFIED: Initialize as null, status will be fetched from DB
         
         let proctoringViolations = { total: 0, windowSwitch: 0, copyPaste: 0 };
         const MAX_VIOLATIONS = 3;
@@ -241,7 +242,7 @@
         function showQuizOffModal() {
             const msg = document.getElementById('quizOffMessage');
             if (msg) {
-                msg.innerHTML = "The admin has <strong class='text-red-500'>not started</strong> the exam yet.<br><br>Please wait for further instructions.";
+                msg.innerHTML = "The admin has <strong class='text-red-500'>turned OFF</strong> the exam sign-in.<br><br>Please wait for further instructions.";
             }
             QUIZ_OFF_MODAL.style.display = 'flex';
         }
@@ -276,6 +277,33 @@
             localStorage.setItem('quizLeaderboard', JSON.stringify(leaderboard));
             return result; 
         }
+
+        // <<< ADDED: Function to fetch the global quiz active status
+        async function fetchQuizActiveStatus() {
+            try {
+                // Assuming you have a table 'quiz_status' with a single row and a column 'is_active' and ID=1
+                const { data, error } = await client
+                    .from(SUPABASE_STATUS_TABLE)
+                    .select('is_active')
+                    .limit(1)
+                    .single();
+
+                // PGRST116 is 'No rows returned' which can happen if the table is empty
+                if (error && error.code !== 'PGRST116') throw error; 
+                
+                // Default to true if no data found (safer approach)
+                isQuizActive = (data && data.is_active !== null) ? data.is_active : true; 
+                return isQuizActive;
+                
+            } catch (e) {
+                console.error('Fetch Quiz Status Exception:', e);
+                showTempMessage("Failed to load quiz status. Assuming ON.", true);
+                isQuizActive = true;
+                return isQuizActive;
+            }
+        }
+        // END ADDED >>>
+
 
         // --- DATABASE UPLOAD LOGIC ---
         // MODIFIED: Accepts detailedResponses (for student_responses_json) and timeLeftSeconds (for time_left_seconds)
@@ -636,7 +664,7 @@
 
         // --- RENDERING VIEWS ---
 
-        async function renderSignIn() {
+        async function renderSignIn() { // <<< MODIFIED: Function made async
             APP_CONTAINER.className = "flex items-center justify-center min-h-screen p-4 bg-gray-50";
             APP_CONTAINER.innerHTML = `
                 <div class="w-full max-w-md bg-white rounded-xl shadow-2xl p-8">
@@ -662,7 +690,12 @@
             const startQuizBtn = document.getElementById('startQuizBtn');
             const loadingIndicator = document.getElementById('loadingQuestionsIndicator');
 
-            const success = await fetchQuizQuestionsFromSupabase();
+            // <<< MODIFICATION 1: Fetch questions and status concurrently
+            const [success] = await Promise.all([
+                fetchQuizQuestionsFromSupabase(), 
+                fetchQuizActiveStatus()
+            ]);
+            // END MODIFICATION 1 >>>
             
             if (loadingIndicator) loadingIndicator.style.display = 'none';
 
@@ -675,9 +708,16 @@
                 return;
             }
 
-            document.getElementById('signInForm').addEventListener('submit', function(e) {
+            document.getElementById('signInForm').addEventListener('submit', async function(e) { // <<< MODIFIED: Handler made async
                 e.preventDefault();
-                if (!isQuizActive) { showQuizOffModal(); return; }
+                
+                // <<< MODIFICATION 2: Check live status from DB
+                const currentStatus = await fetchQuizActiveStatus(); 
+                if (!currentStatus) { 
+                    showQuizOffModal(); 
+                    return; 
+                }
+                // END MODIFICATION 2 >>>
 
                 studentInfo = {
                     name: document.getElementById('studentName').value.trim(),
@@ -1157,7 +1197,7 @@
         }
         // --- END MODIFIED FUNCTION ---
 
-        function renderLeaderboard() {
+        async function renderLeaderboard() { // <<< MODIFIED: Function made async
             APP_CONTAINER.className = "flex items-start justify-center min-h-screen p-4 bg-gray-100";
             APP_CONTAINER.innerHTML = `
                 <div class="w-full max-w-6xl bg-white rounded-2xl shadow-xl p-8 mt-10">
@@ -1165,7 +1205,7 @@
                         <h2 class="text-2xl font-bold text-gray-800">Leaderboard</h2>
                         <div class="flex flex-wrap gap-2">
                             <button id="refreshBtn" class="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg shadow text-sm"><i class="fas fa-sync-alt mr-1"></i> Refresh</button>
-                            <button id="quizToggle" class="px-4 py-2 text-white rounded-lg ${isQuizActive ? 'bg-green-600' : 'bg-red-600'} text-sm">Quiz: ${isQuizActive?'ON':'OFF'}</button>
+                            <button id="quizToggle" class="px-4 py-2 text-white rounded-lg bg-gray-400 text-sm" disabled>Loading Status...</button>
                             <button id="homeBtn" class="px-4 py-2 border rounded-lg text-blue-600 border-blue-600 hover:bg-blue-50 text-sm">Log Out</button>
                         </div>
                     </div>
@@ -1204,6 +1244,15 @@
                         </table>
                     </div>
                 </div>`;
+
+            // <<< MODIFICATION 3: Fetch status on load and update button
+            await fetchQuizActiveStatus();
+            const quizToggleBtn = document.getElementById('quizToggle');
+
+            quizToggleBtn.disabled = false;
+            quizToggleBtn.textContent = `Quiz: ${isQuizActive ? 'ON' : 'OFF'}`;
+            quizToggleBtn.className = `px-4 py-2 text-white rounded-lg ${isQuizActive ? 'bg-green-600' : 'bg-red-600'} text-sm`;
+            // END MODIFICATION 3 >>>
 
             const fetchAndRender = async () => {
                 const tbody = document.getElementById('leaderboardBody');
@@ -1253,11 +1302,39 @@
             };
 
             document.getElementById('homeBtn').onclick = () => setView('signin');
-            document.getElementById('quizToggle').onclick = () => { 
-                isQuizActive = !isQuizActive; 
-                localStorage.setItem('isQuizActive', isQuizActive); 
-                renderLeaderboard(); 
+            
+            // <<< MODIFICATION 4: Toggle Quiz Status in Supabase
+            quizToggleBtn.onclick = async () => { 
+                const newStatus = !isQuizActive; 
+                
+                LOADING_OVERLAY.style.display = 'flex';
+                quizToggleBtn.disabled = true;
+
+                try {
+                    // Update the single row (assuming ID=1 for the status row, as suggested in the setup)
+                    const { error } = await client
+                        .from(SUPABASE_STATUS_TABLE)
+                        .update({ is_active: newStatus })
+                        .eq('id', 1); 
+                    
+                    if (error) throw error;
+                    
+                    isQuizActive = newStatus; 
+                    showTempMessage(`Quiz turned ${isQuizActive ? 'ON' : 'OFF'} successfully.`);
+                    
+                } catch (e) {
+                    console.error('Update Quiz Status Exception:', e);
+                    showTempMessage("Failed to update quiz status in database. Check RLS policies.", true);
+                } finally {
+                    LOADING_OVERLAY.style.display = 'none';
+                    quizToggleBtn.disabled = false;
+                    // Update button text/color
+                    quizToggleBtn.textContent = `Quiz: ${isQuizActive ? 'ON' : 'OFF'}`;
+                    quizToggleBtn.className = `px-4 py-2 text-white rounded-lg ${isQuizActive ? 'bg-green-600' : 'bg-red-600'} text-sm`;
+                }
             };
+            // END MODIFICATION 4 >>>
+
             document.getElementById('refreshBtn').onclick = fetchAndRender;
             document.getElementById('sortSelect').addEventListener('change', fetchAndRender);
             document.getElementById('dateFilter').addEventListener('change', fetchAndRender);
