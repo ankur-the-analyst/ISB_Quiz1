@@ -690,11 +690,8 @@
             const startQuizBtn = document.getElementById('startQuizBtn');
             const loadingIndicator = document.getElementById('loadingQuestionsIndicator');
 
-            // <<< MODIFICATION 1: Fetch questions and status concurrently
-            const [success] = await Promise.all([
-                fetchQuizQuestionsFromSupabase(), 
-                fetchQuizActiveStatus()
-            ]);
+            // <<< MODIFICATION 1 (Adapted): Fetch questions concurrently. Removed status fetch here.
+            const success = await fetchQuizQuestionsFromSupabase(); 
             // END MODIFICATION 1 >>>
             
             if (loadingIndicator) loadingIndicator.style.display = 'none';
@@ -708,17 +705,10 @@
                 return;
             }
 
-            document.getElementById('signInForm').addEventListener('submit', async function(e) { // <<< MODIFIED: Handler made async
+            // <<< MODIFICATION 2: Removed status check from here.
+            document.getElementById('signInForm').addEventListener('submit', function(e) { 
                 e.preventDefault();
                 
-                // <<< MODIFICATION 2: Check live status from DB
-                const currentStatus = await fetchQuizActiveStatus(); 
-                if (!currentStatus) { 
-                    showQuizOffModal(); 
-                    return; 
-                }
-                // END MODIFICATION 2 >>>
-
                 studentInfo = {
                     name: document.getElementById('studentName').value.trim(),
                     email: document.getElementById('collegeEmail').value.trim(),
@@ -728,6 +718,7 @@
                 // Move to Proctoring Rules view after successful sign-in
                 setView('proctoringRules');
             });
+            // END MODIFICATION 2 >>>
             
             document.getElementById('adminSignInButton').onclick = () => setView('admin');
         }
@@ -769,7 +760,22 @@
             checkbox.onchange = () => { startBtn.disabled = !checkbox.checked; };
             cancelBtn.onclick = () => setView('signin');
 
-            startBtn.onclick = () => {
+            // <<< MODIFICATION 3: Added async handler with quiz active status check
+            startBtn.onclick = async () => {
+                // Ensure the button is disabled during the check to prevent double click
+                startBtn.disabled = true; 
+                startBtn.textContent = 'Checking quiz status...';
+                
+                const currentStatus = await fetchQuizActiveStatus(); 
+                
+                if (!currentStatus) { 
+                    showQuizOffModal(); 
+                    startBtn.textContent = 'Agree & Start Quiz';
+                    startBtn.disabled = false; // Re-enable for another attempt if not terminated
+                    return; 
+                }
+                
+                // If active, proceed with quiz start
                 shuffleArray(quizQuestions); 
                 requestFullScreen();
                 enableProctoring();
@@ -786,6 +792,7 @@
 
                 setView('quiz');
             };
+            // END MODIFICATION 3 >>>
         }
 
         // Modified renderQuiz to accommodate the new structure (REMOVED LEGEND HERE)
@@ -1245,14 +1252,14 @@
                     </div>
                 </div>`;
 
-            // <<< MODIFICATION 3: Fetch status on load and update button
+            // <<< MODIFICATION 4: Fetch status on load and update button
             await fetchQuizActiveStatus();
             const quizToggleBtn = document.getElementById('quizToggle');
 
             quizToggleBtn.disabled = false;
             quizToggleBtn.textContent = `Quiz: ${isQuizActive ? 'ON' : 'OFF'}`;
             quizToggleBtn.className = `px-4 py-2 text-white rounded-lg ${isQuizActive ? 'bg-green-600' : 'bg-red-600'} text-sm`;
-            // END MODIFICATION 3 >>>
+            // END MODIFICATION 4 >>>
 
             const fetchAndRender = async () => {
                 const tbody = document.getElementById('leaderboardBody');
@@ -1303,7 +1310,7 @@
 
             document.getElementById('homeBtn').onclick = () => setView('signin');
             
-            // <<< MODIFICATION 4: Toggle Quiz Status in Supabase
+            // <<< MODIFICATION 5: Toggle Quiz Status in Supabase
             quizToggleBtn.onclick = async () => { 
                 const newStatus = !isQuizActive; 
                 
@@ -1333,7 +1340,7 @@
                     quizToggleBtn.className = `px-4 py-2 text-white rounded-lg ${isQuizActive ? 'bg-green-600' : 'bg-red-600'} text-sm`;
                 }
             };
-            // END MODIFICATION 4 >>>
+            // END MODIFICATION 5 >>>
 
             document.getElementById('refreshBtn').onclick = fetchAndRender;
             document.getElementById('sortSelect').addEventListener('change', fetchAndRender);
